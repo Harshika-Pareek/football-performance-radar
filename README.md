@@ -8,12 +8,10 @@ versioning) and a real cloud deployment.
 
 ## Why this exists
 
-This is a hands-on learning project, built to gain real depth across
 streaming data engineering, statistical ML, RAG, LLMOps, and deployment —
 using a real, live data source (the 2026 World Cup) rather than a static
 dataset or toy example.
 
-It is a portfolio/learning build, not a commercial product.
 
 ## The idea
 
