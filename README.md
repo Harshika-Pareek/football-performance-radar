@@ -64,7 +64,7 @@ Kafka (live World Cup match events, KRaft mode)
 
 ## Status
 
-- [x] Day 1: Docker + Kafka environment set up (Windows + WSL2)
+-  Docker + Kafka environment set up (Windows + WSL2)
 - [ ] Kafka fundamentals (reading in progress)
 - [ ] Kafka producer: live World Cup events into a topic
 - [ ] Spark Structured Streaming consumer
