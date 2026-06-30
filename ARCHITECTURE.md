@@ -2,9 +2,6 @@
 
 **Project:** Football Performance Radar  
 **Repo:** football-performance-radar  
-**Status:** In progress — Layer 1 (Kafka ingestion) complete  
-**Last updated:** June 2026
-
 ---
 
 ## 1. What this system does
