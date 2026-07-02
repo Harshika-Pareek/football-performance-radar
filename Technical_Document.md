@@ -6,7 +6,7 @@ during interviews and as a personal knowledge base.
 
 ---
 
-## Day 1 — Environment Setup: Docker, WSL2, Kafka
+##  Environment Setup: Docker, WSL2, Kafka
 
 ### What we were trying to do
 Get a Kafka cluster running locally on Windows using Docker Compose,
@@ -277,7 +277,7 @@ intervals.
 
 ---
 
-## Day 2 — Cassandra: Schema Design and Data Modeling
+## Cassandra: Schema Design and Data Modeling
 
 ### What we were trying to do
 Add Cassandra as the storage layer for match events. Design a schema
