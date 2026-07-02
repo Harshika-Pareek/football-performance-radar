@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   kafka:
     image: confluentinc/cp-kafka:7.6.0
@@ -10,20 +8,8 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-
-      # THREE listeners now, not two: one for the controller (internal),
-      # one for OTHER CONTAINERS on the docker network (kafka-ui uses this),
-      # and one for clients OUTSIDE docker entirely (your Python scripts).
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
-
-      # THIS is the actual fix: advertise a DIFFERENT address depending on
-      # which listener a client connected through. Clients connecting via
-      # the "PLAINTEXT" listener (your Windows scripts, via port 9092) get
-      # told to use localhost:9092 for future requests. Clients connecting
-      # via the "INTERNAL" listener (kafka-ui, another container) get told
-      # to use kafka:29092 instead.
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
-
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -45,8 +31,31 @@ services:
     environment:
       DYNAMIC_CONFIG_ENABLED: "true"
       KAFKA_CLUSTERS_0_NAME: local
-      # kafka-ui now connects via the INTERNAL listener (port 29092),
-      # so it will correctly be advertised kafka:29092, not localhost
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     depends_on:
       - kafka
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: football_radar
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack1
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "128M"
+    mem_limit: 1g
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+volumes:
+  kafka_data:
+  cassandra_data:
