@@ -572,3 +572,234 @@ parsed = raw_stream.select(from_json(...), uuid(), ...)
 # 3. Write to Cassandra continuously
 parsed.writeStream.format("org.apache.spark.sql.cassandra")...
 ```
+
+Day 3 — PySpark Setup on Windows + Spark Consumer
+
+What we were trying to do
+
+Install PySpark locally and write a Spark Structured Streaming consumer
+that reads from the Kafka topic and writes parsed events to Cassandra.
+
+
+Concept: Why local PySpark over Docker for Spark
+
+With only 8GB RAM running Kafka + Cassandra + kafka-ui already, adding
+a Spark Docker container would have pushed the machine over the edge.
+Running PySpark locally (installed via pip into the venv) uses less
+overhead than a full container, is faster to iterate on, and produces
+clearer error messages during development.
+
+The tradeoff: local PySpark requires more manual environment setup
+(JAVA_HOME, HADOOP_HOME, winutils) that a container would handle
+automatically. Worth it for a dev machine; in production you'd
+containerise or use a managed Spark service (EMR, Databricks).
+
+
+Concept: PySpark is a Python wrapper around a JVM
+
+PySpark isn't a pure Python implementation of Spark — it's a thin
+Python API that communicates with a real Java/Scala Spark process
+running underneath. When you call SparkSession.builder.getOrCreate(),
+Python launches a Java process (the "gateway") and communicates with it
+via a socket connection (py4j library).
+
+This means:
+
+
+Java must be installed and reachable
+JAVA_HOME must point to the Java installation directory (not the
+executable itself)
+The path to Java must be parseable by the subprocess launching it
+
+
+All three of these caused problems today.
+
+
+Bug: "The system cannot find the path specified" — three root causes
+
+This error appeared repeatedly but had three distinct causes, each
+requiring a different fix. Working through them in order:
+
+Cause 1: HADOOP_HOME not set
+PySpark on Windows requires winutils.exe and hadoop.dll to handle
+filesystem operations (even when not using HDFS at all). Without
+HADOOP_HOME pointing to a folder containing bin/winutils.exe,
+Spark fails immediately on startup.
+
+Fix: download winutils.exe and hadoop.dll from
+github.com/cdarlint/winutils/tree/master/hadoop-3.3.6/bin and place
+them in C:\hadoop\bin\, then set:
+
+powershell$env:HADOOP_HOME = "C:\hadoop"
+
+Cause 2: JAVA_HOME set to the executable, not the directory
+The existing JAVA_HOME was set to:
+C:\Program Files\Common Files\Oracle\Java\javapath\java.exe
+
+This is wrong — JAVA_HOME must point to the installation directory,
+not the java.exe file itself. Spark constructs the Java command as
+%JAVA_HOME%\bin\java — if JAVA_HOME already ends in java.exe,
+this becomes an invalid path.
+
+Diagnosis:
+
+powershell& "path\to\java.exe" -XshowSettings:all 2>&1 | Select-String "java.home"
+# prints: java.home = C:\Program Files\Java\jdk-17
+
+Fix:
+
+powershell$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
+
+Cause 3: Space in username path breaks PySpark's subprocess call
+Even with correct JAVA_HOME and HADOOP_HOME, launch_gateway kept
+failing. The diagnostic block confirmed Java itself worked fine (exit
+code 0, correct version) — so the issue was in how PySpark built its
+internal command string.
+
+Root cause: the Windows username Whiskey golden contains a space.
+PySpark's launch_gateway builds a command list internally using the
+path to spark-submit, which passes through the path
+C:\Users\Whiskey golden\... — the space causes CreateProcess to
+misparse the command, hence FileNotFoundError [WinError 2].
+
+Fix: create a symlink from a no-space path to the project:
+
+powershell# Run as Administrator
+New-Item -ItemType Directory -Path "C:\projects" -Force
+New-Item -ItemType SymbolicLink -Path "C:\projects\radar" -Target "C:\Users\Whiskey golden\Downloads\football-performance-radar"
+
+Then always run Spark from C:\projects\radar\spark\ instead of the
+original path. From Spark's perspective, the path is clean with no
+spaces anywhere.
+
+Lesson: on Windows, spaces in usernames/paths cause subtle,
+hard-to-diagnose failures in JVM-based tools. Creating a symlink to a
+clean path is the most reliable fix — don't try to quote or escape your
+way around it in subprocess calls.
+
+
+Concept: Environment variables in PowerShell are session-scoped
+
+Setting $env:JAVA_HOME = "..." in PowerShell only applies to that
+terminal session. Open a new terminal window and it's gone. This caused
+confusion repeatedly today — the variable was set in one window but
+the consumer was run from another.
+
+Two ways to make it permanent:
+
+
+Set via Windows UI: Win key → "Edit environment variables for your
+account" → New → add name/value → OK
+Set via PowerShell (requires restart to take effect in new sessions):
+
+
+powershell   [System.Environment]::SetEnvironmentVariable("JAVA_HOME", "C:\Program Files\Java\jdk-17", "Machine")
+
+For now: always set the three variables at the start of each session
+before running Spark:
+
+powershell$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
+$env:HADOOP_HOME = "C:\hadoop"
+$env:SPARK_LOCAL_DIRS = "C:\tmp\spark"
+
+
+Concept: Spark Structured Streaming — the three things that matter
+
+1. readStream vs read
+Normal Spark: spark.read.csv(...) — reads once, finishes.
+Streaming Spark: spark.readStream.format("kafka")... — never finishes,
+processes new messages continuously in micro-batches.
+
+2. Schema on read
+Kafka stores messages as raw bytes. Spark needs to be told the exact
+shape of the JSON inside those bytes at read time — every field name
+and type must match what the producer actually sends.
+
+3. Checkpointing
+Spark writes its Kafka offset progress to a folder after every
+micro-batch. On restart, it reads the checkpoint and picks up exactly
+where it left off — no events reprocessed, none skipped.
+
+
+Concept: RAM management for JVM-heavy local dev
+
+Running Kafka + Cassandra + PySpark on 8GB RAM is tight. The rule:
+never run all three simultaneously unless you have to.
+
+
+Developing Kafka producer: only Kafka needs to be running
+Developing Spark consumer: Kafka + Spark (stop Cassandra until
+ready to test writes)
+Testing full pipeline: all three, but with memory caps on everything
+
+
+Memory caps applied to this project:
+
+yaml# Cassandra (Docker Compose)
+MAX_HEAP_SIZE: "512M"
+HEAP_NEWSIZE: "128M"
+mem_limit: 1g
+
+# WSL2 (.wslconfig in user home)
+[wsl2]
+memory=2GB
+processors=2
+swap=1GB
+
+# Spark (SparkSession config)
+spark.driver.memory: 512m
+spark.executor.memory: 512m
+spark.ui.enabled: false  # saves ~100MB by disabling the web UI
+spark.sql.shuffle.partitions: 2  # reduces parallelism overhead
+
+
+Concept: UDF (User Defined Function) in Spark
+
+A UDF lets you apply a plain Python function to every row in a Spark
+DataFrame. Used in the consumer to generate a UUID per event:
+
+pythonfrom pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+import uuid
+
+generate_uuid = udf(lambda: str(uuid.uuid4()), StringType())
+
+df = df.withColumn("event_id", generate_uuid())
+
+The StringType() argument tells Spark what type this function returns
+— Spark needs this at compile time to build its execution plan.
+
+Performance note: UDFs are slower than built-in Spark functions
+because they break out of the JVM into Python for each row. For
+production at scale, expr("uuid()") (Spark's native UUID function)
+is faster. For a learning project, UDF is fine and teaches the pattern.
+
+
+What's next — completing Layer 2
+
+Spark consumer is written and ready. Tomorrow:
+
+
+Free RAM (stop cassandra + kafka-ui before starting)
+Set env vars in the terminal session
+Navigate via symlink: cd C:\projects\radar\spark
+Run: python consumer.py
+Watch Maven download the Kafka + Cassandra JARs (first run, 2-3 min)
+Verify events land in Cassandra: docker exec -it cassandra cqlsh
+then SELECT * FROM football_radar.match_events;
+
+
+Once data is in Cassandra, Layer 2 is complete.
+
+
+Commands reference — Spark session startup sequence
+
+powershell# Run every session before starting Spark
+docker stop cassandra
+docker stop kafka-ui
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
+$env:HADOOP_HOME = "C:\hadoop"
+$env:SPARK_LOCAL_DIRS = "C:\tmp\spark"
+cd C:\projects\radar\spark
+C:\projects\radar\venv\Scripts\Activate.ps1
+python consumer.py
