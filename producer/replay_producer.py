@@ -26,7 +26,7 @@ BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-TOPIC_NAME = os.environ.get("KAFKA_TOPIC", "worldcup_match_events")
+TOPIC_NAME = os.environ.get("KAFKA_TOPIC", "football.match.events")
 
 FIXTURE_ID = 855735  # England 6-2 Iran, 2022 World Cup
 SECONDS_PER_MATCH_MINUTE = 2  # 1 match-minute = 2 real seconds

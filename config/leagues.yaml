@@ -1,0 +1,46 @@
+# Sports Intelligence Platform — League Configuration
+# Add any sport/league here to enable data ingestion for it
+# league_id values are from API-Football: https://dashboard.api-football.com
+
+sports:
+  football:
+    leagues:
+      - id: 1
+        name: "World Cup"
+        season: 2022
+        active: true
+        free_tier: true
+
+      - id: 39
+        name: "Premier League"
+        season: 2024
+        active: false
+        free_tier: false
+
+      - id: 2
+        name: "Champions League"
+        season: 2024
+        active: false
+        free_tier: false
+
+      - id: 140
+        name: "La Liga"
+        season: 2024
+        active: false
+        free_tier: false
+
+  basketball:
+    leagues:
+      - id: 12
+        name: "NBA"
+        season: 2024
+        active: false
+        free_tier: false
+
+  cricket:
+    leagues:
+      - id: 5
+        name: "ICC World Cup"
+        season: 2023
+        active: false
+        free_tier: false
