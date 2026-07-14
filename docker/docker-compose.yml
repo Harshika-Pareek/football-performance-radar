@@ -44,9 +44,9 @@ services:
       CASSANDRA_CLUSTER_NAME: football_radar
       CASSANDRA_DC: dc1
       CASSANDRA_RACK: rack1
-      MAX_HEAP_SIZE: "512M"
-      HEAP_NEWSIZE: "128M"
-    mem_limit: 1g
+      MAX_HEAP_SIZE: "1G"
+      HEAP_NEWSIZE: "256M"
+    mem_limit: 2g
     volumes:
       - cassandra_data:/var/lib/cassandra
     healthcheck:
@@ -66,7 +66,7 @@ services:
     ports:
       - "4040:4040"
       - "7077:7077"
-    mem_limit: 1500m
+    mem_limit: 1g
     depends_on:
       - kafka
       - cassandra
@@ -78,8 +78,8 @@ services:
       --host 0.0.0.0
       --port 7077
       --webui-port 4040
-      
-spark-worker:
+
+  spark-worker:
     image: apache/spark:3.5.1
     container_name: spark-worker
     user: root
@@ -88,9 +88,9 @@ spark-worker:
       org.apache.spark.deploy.worker.Worker
       spark://spark:7077
     environment:
-      - SPARK_WORKER_MEMORY=512m
-      - SPARK_WORKER_CORES=1
-    mem_limit: 800m
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=2
+    mem_limit: 2500m
     depends_on:
       - spark
     volumes:
