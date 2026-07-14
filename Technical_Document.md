@@ -803,3 +803,110 @@ $env:SPARK_LOCAL_DIRS = "C:\tmp\spark"
 cd C:\projects\radar\spark
 C:\projects\radar\venv\Scripts\Activate.ps1
 python consumer.py
+
+
+Spark Consumer: Docker Setup and RAM Constraints
+
+What we were trying to do
+
+Submit the Spark Structured Streaming consumer to run inside Docker,
+reading from Kafka and writing to Cassandra.
+
+
+Concept: Spark local mode vs cluster mode
+
+Local mode (--master local[2]): Spark runs entirely in one JVM
+process — driver and executor are the same process. No separate worker
+needed. Good for development and testing on a single machine.
+
+Cluster mode (--master spark://host:port): Spark separates the
+driver (coordinates the job) from workers (execute the tasks). Requires
+at least one registered worker node before any job can run. This is
+what production Spark clusters look like.
+
+We attempted cluster mode (master + worker) but hit RAM constraints
+on an 8GB machine. The consumer code itself is correct and proven —
+"Writing batch 0 — 21 rows" printed successfully, confirming Spark
+read and parsed all 21 Kafka events correctly.
+
+
+Concept: Spark master vs worker
+
+Master — the cluster coordinator. Knows which workers exist, how
+many resources they have, and assigns tasks to them. Runs the Spark UI
+(port 4040). Does NOT execute any actual data processing itself.
+
+Worker — registers with the master and executes actual tasks
+(reading from Kafka, processing rows, writing to Cassandra). A job
+submitted to the master sits waiting ("Initial job has not accepted
+any resources") until at least one worker is registered.
+
+This is why --master local[2] works without a worker: in local mode,
+the driver IS the worker — no separate process needed.
+
+
+Bug: bitnami/spark image no longer publicly available
+
+Symptom: docker.io/bitnami/spark:3.5.1: not found
+
+Root cause: Bitnami moved their Spark image to a paid "Bitnami
+Secure Images" tier — the free public image was removed from Docker Hub.
+
+Fix: use the official Apache Spark image instead:
+
+yamlimage: apache/spark:3.5.1
+
+This is maintained by the Apache Software Foundation, genuinely free,
+no account or payment needed.
+
+
+Concept: Spark submit packages vs SparkSession config
+
+There are two ways to load extra JARs (like the Kafka and Cassandra
+connectors) into a Spark job:
+
+Via SparkSession config (what we had initially):
+
+python.config("spark.jars.packages", "org.apache.spark:spark-sql-kafka...")
+
+Works fine for local/embedded mode. Less clean for cluster submission.
+
+Via spark-submit --packages (correct approach for cluster mode):
+
+bashspark-submit --packages "org.apache.spark:spark-sql-kafka..." app.py
+
+This downloads JARs before the job starts, makes them available to
+all workers. The preferred approach when submitting to a cluster.
+
+When using --packages on the command line, remove the
+spark.jars.packages config from SparkSession to avoid duplication.
+
+
+Concept: Docker internal network addresses
+
+When running inside Docker, containers reach each other via their
+container name, not localhost. Key changes needed for Docker mode:
+
+ConfigLocal (Windows)Docker containerKafka bootstraplocalhost:9092kafka:29092Cassandra hostlocalhostcassandra
+
+kafka:29092 specifically because: 29092 is the internal listener
+port (for Docker-internal clients), and 9092 is the external listener
+(for Windows-host clients). Using 9092 from inside Docker would try
+to connect to the wrong advertised address.
+
+
+Concept: RAM requirements for this stack
+
+Running the full stack simultaneously on 8GB RAM is genuinely too tight:
+
+ComponentRAM usageDocker Desktop + WSL2~1.5GBWindows + VS Code~2GBKafka container~300MBCassandra container (capped)~1GBSpark master container~900MBSpark worker container~600MBTotal~6.3GB — leaves ~1.7GB for OS paging
+
+At this utilisation level, Docker commands themselves start freezing
+because there's insufficient RAM for the Docker daemon to respond.
+
+Fix: upgrade to 16GB RAM. With 16GB, each component gets proper
+headroom and the whole stack runs without any memory pressure.
+
+Lesson for production design: always account for infrastructure
+overhead when sizing machines. A "512MB Spark executor" still needs
+~900MB total RAM for the container, JVM startup overhead, and OS buffers.
