@@ -23,13 +23,13 @@ sports:
         active: false
         free_tier: false
 
-      - id: 140
+      - id: 140P
         name: "La Liga"
         season: 2024
         active: false
         free_tier: false
 
-  basketball:
+  basketball:    
     leagues:
       - id: 12
         name: "NBA"
