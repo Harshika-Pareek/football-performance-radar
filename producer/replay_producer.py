@@ -25,7 +25,7 @@ API_KEY = os.environ["API_FOOTBALL_KEY"]
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
 TOPIC_NAME = os.environ.get("KAFKA_TOPIC", "football.match.events")
 
 FIXTURE_ID = 855735  # England 6-2 Iran, 2022 World Cup
