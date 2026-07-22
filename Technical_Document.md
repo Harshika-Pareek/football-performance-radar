@@ -910,3 +910,94 @@ headroom and the whole stack runs without any memory pressure.
 Lesson for production design: always account for infrastructure
 overhead when sizing machines. A "512MB Spark executor" still needs
 ~900MB total RAM for the container, JVM startup overhead, and OS buffers.
+
+Day 5 — Layer 2 Complete: Spark → Cassandra Working
+What we accomplished
+
+Full end-to-end pipeline working for the first time:
+
+API-Football → replay_producer.py → Kafka → Spark Structured Streaming → Cassandra
+
+22 real World Cup match events (England 6-2 Iran) permanently stored in Cassandra.
+
+Bug 1: localhost resolves to IPv6 on Windows
+
+Symptom: NoBrokersAvailable even though Kafka was healthy.
+
+Diagnosis: Test-NetConnection -ComputerName localhost -Port 9092 showed RemoteAddress: ::1 — Windows resolved localhost to IPv6, but Kafka listens on IPv4.
+
+Fix: Use 127.0.0.1 explicitly:
+
+KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+
+Production lesson: Never use localhost in distributed configs. Always specify IP version explicitly.
+
+Bug 2: Spark executor crash loop (exit code 1)
+
+Symptom: Executors 20-65 launching and dying every 30 seconds.
+
+Root cause: -Xmx512M — executor JVM capped at 512MB. Not enough to load 28 JARs + connect to Kafka + Cassandra + process data.
+
+Fix:
+
+python
+.config("spark.executor.memory", "1g")
+.config("spark.executor.memoryOverhead", "512m")
+
+Production lesson: executor memory = data size × 3, minimum 1GB for connector-heavy jobs.
+
+Bug 3: Driver-executor networking
+
+Symptom: Executor tried connecting to 127.0.0.1:33771 — pointed to itself, not the driver.
+
+Root cause: Driver advertised 127.0.0.1 as its address. Inside the worker container, 127.0.0.1 = the worker itself, not the spark master container.
+
+Fix:
+
+python
+.config("spark.driver.host", "spark")           # Docker container name
+.config("spark.driver.bindAddress", "0.0.0.0")
+
+Proof: exit code changed from 1 (failure) to 0 (success).
+
+Production lesson: In containerised Spark, always set spark.driver.host to the container/service name, never localhost.
+
+Concept: Exit codes
+0 = success
+1 = generic failure
+137 = OOM kill
+143 = graceful shutdown
+Concept: Producer vs Consumer
+replay_producer.py  →  Kafka topic  →  consumer.py (Spark)  →  Cassandra
+(pushes data in)       (buffer)         (reads data out)        (permanent store)
+Concept: Consumer Groups
+
+Multiple teams read the same topic independently via consumer groups:
+
+football.match.events
+    → "trading-consumers"    (updates odds)
+    → "risk-consumers"       (fraud detection)
+    → "analytics-consumers"  (ML training)
+
+Different topics = different data types Different consumer groups = different teams, same data
+
+Concept: WSL2 memory
+
+Docker on Windows runs inside WSL2. Default 2GB WSL2 memory causes crashes.
+
+Fix: C:\Users\{user}\.wslconfig:
+
+[wsl2]
+memory=6GB
+processors=4
+swap=2GB
+Data confirmed in Cassandra
+fixture_id | minute | event_type | team    | player
+-----------+--------+------------+---------+------------------
+    855735 |     35 |       Goal | England | J. Bellingham
+    855735 |     43 |       Goal | England | B. Saka
+    855735 |     45 |       Goal | England | R. Sterling
+    855735 |     62 |       Goal | England | B. Saka
+    855735 |     71 |       Goal | England | M. Rashford
+    855735 |     90 |       Goal | England | J. Grealish
+    ... 22 rows total

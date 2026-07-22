@@ -13,17 +13,13 @@ spark = (
     SparkSession.builder
     .appName("FootballPerformanceRadar")
     .config("spark.driver.memory", "512m")
-    .config("spark.executor.memory", "512m")
+    .config("spark.executor.memory", "1g")        # increase from 512m
+    .config("spark.executor.memoryOverhead", "512m") # add overhead
     .config("spark.ui.enabled", "false")
     .config("spark.sql.shuffle.partitions", "2")
-    .config("spark.driver.host", "127.0.0.1")
-    .config("spark.driver.bindAddress", "127.0.0.1")
-    .config(
-        "spark.jars.packages",
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,"
-        "com.datastax.spark:spark-cassandra-connector_2.12:3.5.0"
-    )
-    .config("spark.cassandra.connection.host", "cassandra")  # was localhost
+    .config("spark.driver.host", "spark")          # use container name not 127.0.0.1
+    .config("spark.driver.bindAddress", "0.0.0.0")
+    .config("spark.cassandra.connection.host", "cassandra")
     .config("spark.cassandra.connection.port", "9042")
     .getOrCreate()
 )
