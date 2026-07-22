@@ -1,46 +1,145 @@
-# Sports Intelligence Platform — League Configuration
-# Add any sport/league here to enable data ingestion for it
-# league_id values are from API-Football: https://dashboard.api-football.com
+# SportsPulse — Sports & League Configuration
+# ─────────────────────────────────────────────────────────────────
+# This file controls which sports and leagues the ingestion
+# pipeline fetches data for. No code changes needed to add a
+# new league — just add an entry here and set active: true.
+#
+# active: true  → producer fetches this league on every run
+# active: false → league is defined but not currently ingested
+#
+# free_tier: true  → accessible on API-Football free plan (100 req/day)
+# free_tier: false → requires paid API-Football plan
+#
+# status: human-readable note on current availability
+# ─────────────────────────────────────────────────────────────────
 
 sports:
+
   football:
     leagues:
+
+      # ── ACTIVE (free tier, historical) ────────────────────────
       - id: 1
         name: "World Cup"
         season: 2022
         active: true
         free_tier: true
+        status: "historical — full tournament data, 64 matches, free tier"
+        notes: "Primary training dataset for ML model. England 6-2 Iran
+                replay confirmed working. All 64 matches available."
+
+      # ── PLANNED (paid tier) ───────────────────────────────────
+      - id: 39
+        name: "Premier League"
+        season: 2025
+        active: false
+        free_tier: false
+        status: "historical — 2025/26 season ended May 2026, rich data"
+        notes: "380 matches, full player stats. Activate once API plan
+                upgraded. Best dataset for long-term ML training."
 
       - id: 39
         name: "Premier League"
-        season: 2024
+        season: 2026
         active: false
         free_tier: false
+        status: "upcoming — 2026/27 season starts 22 August 2026"
+        notes: "Activate on 22 Aug 2026 for live ongoing data. This is
+                the target for daily morning briefing feature."
 
       - id: 2
         name: "Champions League"
-        season: 2024
+        season: 2025
         active: false
         free_tier: false
+        status: "historical — 2024/25 season complete"
 
-      - id: 140P
+      - id: 140
         name: "La Liga"
+        season: 2026
+        active: false
+        free_tier: false
+        status: "upcoming — 2026/27 season starts August 2026"
+
+      - id: 78
+        name: "Bundesliga"
+        season: 2026
+        active: false
+        free_tier: false
+        status: "upcoming — 2026/27 season starts August 2026"
+
+      - id: 135
+        name: "Serie A"
+        season: 2026
+        active: false
+        free_tier: false
+        status: "upcoming — 2026/27 season starts August 2026"
+
+  nfl:
+    leagues:
+
+      - id: 1
+        name: "NFL"
+        season: 2025
+        active: false
+        free_tier: false
+        status: "historical — 2024/25 season complete (Super Bowl Feb 2025)"
+        notes: "Add after football ML model is working. Same pipeline
+                pattern, different sport-specific feature engineering."
+
+      - id: 1
+        name: "NFL"
+        season: 2026
+        active: false
+        free_tier: false
+        status: "upcoming — 2026/27 NFL season starts September 2026"
+
+  cricket:
+    leagues:
+
+      - id: 1
+        name: "IPL"
+        season: 2026
+        active: false
+        free_tier: false
+        status: "historical — IPL 2026 complete"
+        notes: "Strong ML angle — Duckworth-Lewis is essentially a live
+                win probability model. Natural fit for the intelligence layer."
+
+      - id: 9
+        name: "ICC Men's T20 World Cup"
         season: 2024
         active: false
         free_tier: false
+        status: "historical — tournament complete"
 
-  basketball:    
+  basketball:
     leagues:
+
       - id: 12
         name: "NBA"
         season: 2024
         active: false
         free_tier: false
+        status: "historical — 2023/24 season complete"
+        notes: "Rich player tracking data. Add after football + NFL working."
 
-  cricket:
-    leagues:
-      - id: 5
-        name: "ICC World Cup"
-        season: 2023
-        active: false
-        free_tier: false
+# ─────────────────────────────────────────────────────────────────
+# ACTIVATION ROADMAP
+# ─────────────────────────────────────────────────────────────────
+#
+# Phase 1 (now):
+#   World Cup 2022 → active: true (already ingesting, ML training)
+#
+# Phase 2 (22 August 2026 — Premier League kicks off):
+#   Premier League 2026 → active: true
+#   Morning briefing becomes genuinely useful daily
+#
+# Phase 3 (September 2026 — NFL kicks off):
+#   NFL 2026 → active: true
+#   Multi-sport morning briefing: football + NFL
+#
+# Phase 4 (when API plan upgraded):
+#   Premier League 2025 (historical) → active: true
+#   Rich historical dataset for improved ML model accuracy
+# ─────────────────────────────────────────────────────────────────

@@ -2,76 +2,117 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka
+    hostname: kafka
+    restart: unless-stopped
+
     ports:
       - "9092:9092"
       - "9093:9093"
+
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
+
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+
+      # PLAINTEXT → localhost:9092 for Windows Python scripts (external)
+      # INTERNAL  → kafka:29092 for other containers (internal Docker network)
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
       CLUSTER_ID: "xTIlr6BvSsyWFGGCQ3u73Q"
+
+      # JVM heap capped — prevents Kafka consuming all available RAM
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+
+    mem_limit: 1g
+    cpus: 0.75
+
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
+      interval: 30s
+      timeout: 20s
+      retries: 15
+      start_period: 120s
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    restart: unless-stopped
+
     ports:
       - "8080:8080"
+
     environment:
       DYNAMIC_CONFIG_ENABLED: "true"
       KAFKA_CLUSTERS_0_NAME: local
+      # kafka-ui is a container → uses internal listener kafka:29092
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
 
   cassandra:
     image: cassandra:4.1
     container_name: cassandra
+    restart: unless-stopped
+
     ports:
       - "9042:9042"
+
     environment:
       CASSANDRA_CLUSTER_NAME: football_radar
       CASSANDRA_DC: dc1
       CASSANDRA_RACK: rack1
-      MAX_HEAP_SIZE: "1G"
-      HEAP_NEWSIZE: "256M"
-    mem_limit: 2g
+
+      # JVM heap capped — Cassandra defaults to 2-4GB which kills an 8GB machine
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "128M"
+
+    mem_limit: 1g
+
     volumes:
       - cassandra_data:/var/lib/cassandra
+
     healthcheck:
       test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
       interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 90s
+      timeout: 20s
+      retries: 20
+      start_period: 180s
 
   spark:
     image: apache/spark:3.5.1
     container_name: spark
     user: root
+    restart: unless-stopped
+
     environment:
-      - SPARK_MASTER_PORT=7077
-      - SPARK_MASTER_WEBUI_PORT=4040
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 4040
+
     ports:
       - "4040:4040"
       - "7077:7077"
-    mem_limit: 1g
+
+    mem_limit: 768m
+    cpus: 0.75
+
     depends_on:
       - kafka
       - cassandra
+
     volumes:
       - ../spark:/opt/spark_apps
+
     command: >
       /opt/spark/bin/spark-class
       org.apache.spark.deploy.master.Master
@@ -83,19 +124,25 @@ services:
     image: apache/spark:3.5.1
     container_name: spark-worker
     user: root
+    restart: unless-stopped
+
     command: >
       /opt/spark/bin/spark-class
       org.apache.spark.deploy.worker.Worker
       spark://spark:7077
+
     environment:
-      - SPARK_WORKER_MEMORY=2g
-      - SPARK_WORKER_CORES=2
-    mem_limit: 2500m
+      SPARK_WORKER_MEMORY: 512m
+      SPARK_WORKER_CORES: 1
+
+    mem_limit: 1g
+    cpus: 0.75
+
     depends_on:
       - spark
+
     volumes:
       - ../spark:/opt/spark_apps
 
 volumes:
-  kafka_data:
   cassandra_data:
