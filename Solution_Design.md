@@ -251,10 +251,3 @@ Paste any diagram block directly — GitHub renders Mermaid automatically.
 3. Paste the Mermaid code
 4. Export as PNG/PDF for presentations
 
-### In a slide deck
-Screenshot the rendered GitHub version or export from draw.io.
-
-### In interviews
-When asked "walk me through your architecture" — open your GitHub README
-and walk through the diagrams top to bottom: Context → Container → Data Flow → ML Pipeline → MCP.
-Each diagram answers a different level of "how does it work?"
