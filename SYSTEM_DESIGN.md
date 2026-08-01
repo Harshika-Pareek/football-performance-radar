@@ -299,15 +299,114 @@ that handle duplicate delivery correctly.
 
 ---
 
+## 10. Model Deployment Patterns
+
+### Train → Register → Promote → Serve
+
+The standard pattern for productionising an ML model, regardless of
+whether the tooling is self-hosted or managed cloud:
+
+```
+Train        → produces a model artifact + evaluation metrics
+Register     → artifact + metadata stored in a versioned registry
+Promote      → model moves through stages: None → Staging → Production
+Serve        → serving layer loads whichever model is tagged Production
+```
+
+**Why staged promotion matters:** it decouples "a model was trained"
+from "a model is live." A newly trained model sits in Staging until
+it passes an evaluation gate — this prevents a regressed model from
+silently replacing a working one in production.
+
+### SportsPulse implementation
+
+```
+scikit-learn/scipy Poisson model trained on PL historical data
+    ↓
+mlflow.log_model() — artifact stored in MinIO, experiment logged
+    ↓
+Model registered in MLflow Model Registry, stage = Staging
+    ↓
+Evaluation gate: does this model beat the current Production
+model on held-out data? (champion/challenger pattern)
+    ↓
+If yes → mlflow.transition_model_version_stage(stage="Production")
+    ↓
+Serving layer: mlflow.pyfunc.load_model("models:/football-poisson/Production")
+```
+
+### Equivalence to managed platforms
+
+This pattern is identical in structure to AWS SageMaker (Training Job
+→ Model Registry → Endpoint), Databricks Model Serving, and Vertex AI
+Model Registry. The registry/staging/serving concepts are platform-
+agnostic — MLflow's open-source implementation teaches the same
+mental model as any managed equivalent. Migrating between them is a
+tooling change, not an architectural one.
+
+### Train/serve skew
+
+A common production ML failure mode: the features used at training
+time are computed differently from the features used at serving
+(inference) time — e.g. training reads from a batch CSV, serving
+computes features live from a slightly different code path. This
+produces silently degraded predictions with no error thrown.
+
+**Feast (planned, Phase 2)** addresses this directly — the same
+feature definitions serve both the offline store (training) and
+online store (serving), eliminating the two-code-path problem.
+
+---
+
+## 11. Microservice Deployment for Multi-Agent Systems
+
+### Why each agent is a separate service, not a shared process
+
+A naive multi-agent implementation runs all agents as functions
+within one Python process. This breaks down for the same reasons
+monolithic architectures generally do:
+
+- One agent's bug or crash takes down all agents
+- Agents can't be scaled independently based on their own load
+- Testing one agent requires the full system running
+- No clear boundary for what data each agent is allowed to touch
+
+### SportsPulse's agent deployment pattern
+
+Each agent (Orchestrator, Stats, Prediction, News, RAG, Commentary)
+is deployed as an independent container with its own service
+boundary. Agents communicate via the A2A protocol — structured
+JSON messages over HTTP, conceptually similar to how MCP structures
+tool calls.
+
+**The critical design rule:** no agent accesses Cassandra, MLflow,
+or Qdrant directly. All data access is mediated through the MCP
+server's typed tool interfaces. This means:
+
+- Every data access is auditable at a single choke point
+- Adding a new agent never requires new direct database credentials
+- The same tool interface serves both human-facing API calls and
+  agent-to-agent calls — one access pattern, not two
+
+### Sequencing dependency
+
+Agent deployment (A2A) requires the MCP server to exist first, since
+every agent's tool calls route through MCP's typed interfaces. This
+is why SportsPulse's roadmap places MCP (Phase 4, before) ahead of
+full A2A orchestration (Phase 4, after) — agents need something
+concrete to call before they can coordinate.
+
+---
+
 ## Concepts to be added
 
 | Layer | Concepts |
 |---|---|
-| Layer 3 — ML | Feature stores, train/serve skew, model versioning, data leakage, online vs offline features |
+| Layer 3 — ML | Feature stores, train/serve skew ✅, model versioning ✅, data leakage, online vs offline features |
 | Layer 4 — RAG | Vector databases, embedding models, retrieval strategies, semantic vs keyword search |
 | Layer 5 — API | REST design, rate limiting, caching, API versioning, WebSocket vs polling |
 | Layer 6 — MCP | Tool interfaces, structured data access patterns, agent protocols |
-| Layer 7 — A2A | Agent orchestration, multi-agent coordination, failure modes |
+| Layer 7 — A2A | Agent orchestration ✅, multi-agent coordination, failure modes |
 | Deployment | Container orchestration, health checks, rolling deployments, observability |
 
 ---
@@ -324,3 +423,6 @@ that handle duplicate delivery correctly.
 | Message key = fixture_id | Yes | Per-match event ordering guaranteed |
 | CQRS | Yes | Write and read paths optimised independently |
 | maxOffsetsPerTrigger | Planned | Backpressure control during traffic spikes |
+| Model registry pattern | MLflow, champion/challenger | Equivalent to SageMaker, self-hosted |
+| Agent deployment | One container per agent | Independent scaling, clear service boundaries |
+| Agent data access | Via MCP only, no direct DB access | Single auditable access point |

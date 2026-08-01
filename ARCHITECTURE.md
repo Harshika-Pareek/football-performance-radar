@@ -105,6 +105,7 @@ FastAPI (versioned REST + WebSocket)
   /v1/teams/{sport}/{team_id}/form
   /v1/ask                          (RAG endpoint)
   /v1/morning-briefing/{date}      (daily briefing)
+  /v1/notifications/subscribe      (push notification opt-in)
   /health                          (health check)
   
   Security: JWT authentication, RBAC, rate limiting
@@ -114,6 +115,20 @@ React Dashboard (three surfaces)
   → Morning briefing (daily predictions + insights)
   → Live match intelligence (real-time win probability)
   → Post-match analysis (AI-generated, data-grounded)
+
+NOTIFICATION LAYER
+─────────────────────────────────────────────────────────────
+Trigger conditions (evaluated on each new prediction):
+  → New match added to morning briefing
+  → Live win probability crosses significant threshold mid-match
+  → Model vs market divergence detected (if odds layer built)
+
+Delivery mechanism:
+  → Web Push API (VAPID keys, self-hosted) — free, browser-native
+  → OR OneSignal (free tier) — simpler, handles device/browser
+    permission flow and delivery infrastructure
+  → FastAPI endpoint receives subscription on opt-in, stores in
+    Cassandra, triggers push on qualifying prediction events
 
 AGENTIC LAYER
 ─────────────────────────────────────────────────────────────
@@ -137,6 +152,12 @@ Agent Orchestrator (A2A protocol)
   → RAG Agent         (retrieves relevant match context)
   → Commentary Agent  (generates match narratives)
   → Betting Risk Agent (detects value in market prices)
+
+  Deployment pattern (see Section 6a for full detail):
+  → Each agent = independent container, own service boundary
+  → Agents never touch the database directly — all data access
+    goes through the MCP server's typed tools
+  → Orchestrator is the single entry point for user/agent queries
 
 PLATFORM LAYER
 ─────────────────────────────────────────────────────────────
@@ -184,6 +205,7 @@ AI Platform Dashboard
 | LLM observability | Langfuse (self-hosted) | Prompt versions, traces, eval scores |
 | API | FastAPI | Versioned REST + WebSocket, async |
 | Frontend | React | Three product surfaces |
+| Notifications | Web Push API / OneSignal | Free, standard browser push mechanism |
 | Agents | MCP + A2A | Typed tools, multi-agent orchestration |
 | CI/CD | GitHub Actions | Free, integrated with repo |
 | IaC | Terraform | Reproducible, targets Railway not AWS |
@@ -224,7 +246,11 @@ Training data → Train challenger model
 **Football:** Poisson regression (Dixon-Coles)
 - Goals are count data — Poisson is statistically correct
 - Models home/away goals as independent Poisson processes
-- Outputs: home win %, draw %, away win %, expected goals
+- Outputs: home win %, draw %, away win %, predicted goals (pre-match)
+- Note: this is a pre-match expected-goals estimate derived from
+  historical attack/defence strength — not true shot-based xG, which
+  requires shot-level data (location, angle) not present in this
+  project's data sources
 
 **NBA:** Regression on team offensive/defensive ratings
 - Points scored follow a roughly normal distribution at game level
@@ -268,6 +294,95 @@ Every AWS service in the original plan has a free, Docker-native alternative tha
 
 ---
 
+## 6a. Model & Agent Deployment Strategy
+
+### Model deployment — the SageMaker-equivalent pattern
+
+Managed cloud ML platforms (AWS SageMaker, Databricks Model Serving)
+provide: train → register → promote → serve via managed endpoint.
+SportsPulse implements the identical pattern with open, self-hosted
+tools:
+
+```
+Train model (Poisson regression, scikit-learn/scipy)
+    ↓
+MLflow tracks the experiment (params, metrics, artifacts)
+    ↓
+Model artifact stored in MinIO (S3-compatible object storage)
+    ↓
+MLflow Model Registry: staged as "Staging"
+    ↓
+Automated evaluation gate (held-out test set, must beat
+current champion on defined metrics)
+    ↓
+Promoted to "Production" stage in registry
+    ↓
+FastAPI loads the "Production" stage model at startup/refresh
+via mlflow.pyfunc.load_model("models:/football-poisson/Production")
+    ↓
+Serves predictions via REST endpoint
+```
+
+**Why this is architecturally equivalent to SageMaker:** the concepts
+— experiment tracking, model registry, staged promotion, managed
+serving via API — are present in both. The difference is deployment
+target (self-hosted vs AWS-managed), not architecture. Migrating to
+SageMaker later is a target change: swap MinIO for S3, MLflow's
+tracking server for SageMaker Experiments, and the FastAPI serving
+layer for a SageMaker endpoint — the model code and registry pattern
+carry over unchanged.
+
+### Agent deployment — A2A microservice pattern
+
+Each agent in the A2A layer is deployed as an **independent
+containerised service**, not a function or thread inside a monolith.
+This mirrors how real multi-agent systems are deployed in production.
+
+```yaml
+# docker-compose.yml (Phase 4 addition)
+  orchestrator-agent:
+    build: ./agents/orchestrator
+    depends_on: [mcp-server]
+
+  stats-agent:
+    build: ./agents/stats
+    depends_on: [mcp-server]
+
+  prediction-agent:
+    build: ./agents/prediction
+    depends_on: [mcp-server]
+
+  news-agent:
+    build: ./agents/news
+    depends_on: [mcp-server]
+```
+
+**Key architectural rules:**
+1. Agents communicate with each other via the A2A protocol
+   (structured JSON messages over HTTP)
+2. No agent accesses Cassandra, MLflow, or Qdrant directly — every
+   data access goes through the MCP server's typed tool interfaces.
+   This keeps data access auditable and consistent regardless of
+   which agent or external LLM is calling in.
+3. The Orchestrator Agent is the single entry point for any
+   query — it decomposes the request and delegates to specialist
+   agents, then synthesises their responses.
+4. Each agent is independently scalable and independently
+   deployable — a change to the News Agent doesn't require
+   redeploying the Prediction Agent.
+
+**Deployment target:** same Railway/Render project as the rest of
+the stack. At this project's scale, independent scaling isn't
+required — the value of the microservice boundary is architectural
+clarity and testability, not throughput.
+
+**Sequencing dependency:** Agent deployment (Layer 7) requires the
+MCP server (Layer 6) to exist first, since every agent's tool calls
+route through MCP. Building A2A before MCP would leave agents with
+no data access pattern to call.
+
+---
+
 ## 7. Delivery Phases
 
 | Phase | Content | Target |
@@ -276,7 +391,7 @@ Every AWS service in the original plan has a free, Docker-native alternative tha
 | Phase 2 | ML lifecycle + Feature Store + MLflow champion/challenger | August 2026 |
 | Phase 3 | RAG + Qdrant + Ragas evaluation + Langfuse observability | September 2026 |
 | Phase 4 | MCP server + Multi-agent platform (A2A) | October 2026 |
-| Phase 5 | CI/CD + Security + Terraform + Railway deployment | November 2026 |
+| Phase 5 | CI/CD + Security + Terraform + Railway deployment + Notifications | November 2026 |
 | Phase 6 | AI Platform Dashboard + full observability | December 2026 |
 
 ---
@@ -315,17 +430,20 @@ Every AWS service in the original plan has a free, Docker-native alternative tha
 | Cassandra schema (UUID idempotent writes) | ✅ Complete |
 | MinIO (artifact store) | ✅ Running |
 | MLflow (experiment tracking) | ✅ Running |
+| Feature extraction (2025/26 PL team strengths) | ✅ Complete |
 | Multi-sport producer architecture | 🔄 In progress |
+| Poisson model + MLflow logging | 🔄 In progress |
 | Feast feature store | ⏳ Planned — Phase 2 |
-| ML models + champion/challenger | ⏳ Planned — Phase 2 |
+| Champion/challenger promotion | ⏳ Planned — Phase 2 |
 | Streaming inference | ⏳ Planned — Phase 2 |
 | Qdrant vector database | ⏳ Planned — Phase 3 |
 | RAG pipeline + Ragas | ⏳ Planned — Phase 3 |
 | Langfuse observability | ⏳ Planned — Phase 3 |
 | FastAPI serving layer | ⏳ Planned — Phase 3 |
 | React dashboard | ⏳ Planned — Phase 3 |
+| Push notifications | ⏳ Planned — Phase 5 |
 | MCP server | ⏳ Planned — Phase 4 |
-| A2A multi-agent | ⏳ Planned — Phase 4 |
+| A2A multi-agent (containerised per-agent) | ⏳ Planned — Phase 4 |
 | GitHub Actions CI/CD | ⏳ Planned — Phase 5 |
 | Terraform IaC | ⏳ Planned — Phase 5 |
 | Railway deployment | ⏳ Planned — Phase 5 |
@@ -343,3 +461,4 @@ Every AWS service in the original plan has a free, Docker-native alternative tha
 - **IPv4 vs IPv6** — Windows resolves localhost to ::1 (IPv6) by default; Kafka Docker binds IPv4 only; use 127.0.0.1 explicitly in producer config
 - **MinIO vs S3** — identical API, zero cost locally, one config change to migrate to production S3
 - **JAR caching** — Spark downloads connector JARs once to /root/.ivy2/jars; subsequent runs start in seconds not minutes
+- **"xG" terminology** — true expected goals requires shot-level data (location, angle); a pre-match Poisson lambda is a different, valid metric but should be labelled "predicted goals" not "xG" to avoid overclaiming what the model measures
