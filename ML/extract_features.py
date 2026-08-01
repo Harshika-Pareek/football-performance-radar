@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+import json
+
 
 # Step 1: Load the API key the same way test_pl_2025_data.py does -
 # the key lives in producer/.env, not in this ml/ folder, so we point
@@ -27,6 +29,7 @@ resp = requests.get(
 resp.raise_for_status()
 matches = resp.json().get("matches", [])
 print(f"Fetched {len(matches)} finished 2025/26 PL matches")
+print(json.dumps(matches[0], indent=2))
 
 # Step 3: Flatten the nested JSON into one row per match with just the
 # fields we need (team names + final score). Working with a flat list of
