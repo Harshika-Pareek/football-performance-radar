@@ -1,4 +1,4 @@
-# Football Performance Radar — World Cup 2026
+# Multi-sport Intelligence Platform
 
 A real-time system that ingests live World Cup match events, computes
 expected vs. actual player performance using a properly justified
