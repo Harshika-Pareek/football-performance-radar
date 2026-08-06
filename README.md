@@ -1,4 +1,4 @@
-# Multi-sport Intelligence Platform
+# Multi-sport Intelligence Platform Market/Pricing
 
 A real-time system that ingests live World Cup match events, computes
 expected vs. actual player performance using a properly justified
