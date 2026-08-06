@@ -208,7 +208,7 @@ services:
       --host 0.0.0.0
       --port 5000
 
-    mem_limit: 512m
+    mem_limit: 1g
 
     depends_on:
       minio:
