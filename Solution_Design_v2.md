@@ -213,6 +213,237 @@ Arsenal vs Coventry City
 
 ---
 
+## Level 2: Pricing Optimization Engine (Detailed)
+
+Expands the Pricing and Margin diagram above into the full decision
+flow — from multiple model outputs through to a monitored, tested
+pricing recommendation.
+
+```mermaid
+graph TB
+    MODELS["ML Models"]
+
+    WINPROB["Win Probability<br/>Poisson regression"]
+    DEMAND["Demand Model<br/>illustrative, synthetic data"]
+    SEGMENT["Customer Segments<br/>illustrative, synthetic data"]
+
+    ENGINE["Pricing Optimization Engine"]
+
+    MARGIN["Target Margin<br/>confidence-linked"]
+    LIABILITY["Liability Rules"]
+    COMPETITOR["Competitor Odds"]
+
+    RECO["Dynamic Pricing Recommendation"]
+    EXPERIMENT["Experimentation Engine<br/>A/B testing"]
+    MONITOR["Monitoring and Drift Detection"]
+
+    MODELS --> WINPROB
+    MODELS --> DEMAND
+    MODELS --> SEGMENT
+
+    WINPROB --> ENGINE
+    DEMAND --> ENGINE
+    SEGMENT --> ENGINE
+
+    ENGINE --> MARGIN
+    ENGINE --> LIABILITY
+    ENGINE --> COMPETITOR
+
+    MARGIN --> RECO
+    LIABILITY --> RECO
+    COMPETITOR --> RECO
+
+    RECO --> EXPERIMENT
+    EXPERIMENT --> MONITOR
+    MONITOR -.->|feedback loop| MODELS
+```
+
+**What is built vs illustrative right now:**
+
+| Component | Status |
+|---|---|
+| Win Probability (Poisson model) | Built, backtested, real data |
+| Demand Model | Illustrative — synthetic data, demonstrates methodology |
+| Customer Segments (K-Means) | Illustrative — synthetic data, demonstrates methodology |
+| Target Margin (confidence-linked) | Built |
+| Liability Rules | Conceptual — not yet implemented |
+| Competitor Odds | Conceptual — would use a real odds API (e.g. The Odds API) |
+| Experimentation Engine | Conceptual — champion/challenger pattern already exists in MLflow, extending to live A/B testing is the next step |
+| Monitoring and Drift Detection | Conceptual — MLflow provides the tracking infrastructure this would build on |
+
+The feedback loop (Monitoring back into ML Models) is the same
+champion/challenger promotion pattern already used for the core
+prediction model — retraining is triggered when monitored
+performance degrades, not on a fixed schedule.
+
+---
+
+## Pricing Drift Detection
+
+Expands the "Monitoring and Drift Detection" box above — what drift
+actually means in a pricing context, and how it would be detected.
+
+Two distinct types of drift matter here, and they require different
+detection approaches:
+
+### 1. Model drift (the prediction is getting worse)
+
+The underlying Poisson model's out-of-sample accuracy or calibration
+degrades over time as squads, form, and tactics change season to
+season.
+
+```mermaid
+graph LR
+    LIVE["Live Predictions"]
+    ACTUAL["Actual Results"]
+    CALC["Rolling Calibration Check<br/>last N matches"]
+    THRESHOLD["Below threshold?"]
+    RETRAIN["Trigger Retraining<br/>challenger vs champion"]
+    OK["Continue serving champion"]
+
+    LIVE --> CALC
+    ACTUAL --> CALC
+    CALC --> THRESHOLD
+    THRESHOLD -->|Yes| RETRAIN
+    THRESHOLD -->|No| OK
+```
+
+**Concretely:** track calibration (not just accuracy) on a rolling
+window of the most recent matches, logged in MLflow alongside every
+prediction. If calibration falls below a defined threshold — the
+model is systematically over- or under-confident — that triggers
+the champion/challenger retraining cycle already built into the
+MLflow registry pattern.
+
+### 2. Pricing drift (the price is diverging from the market)
+
+Separate from model quality — this is about whether the *priced
+odds* are staying reasonable relative to the wider market, regardless
+of whether the underlying probability model is accurate.
+
+```mermaid
+graph LR
+    OURPRICE["Our Market Odds"]
+    MARKETPRICE["Competitor Odds<br/>e.g. The Odds API"]
+    GAP["Price Gap<br/>percentage difference"]
+    FLAG["Gap exceeds threshold?"]
+    REVIEW["Flag for manual review"]
+    PASS["No action needed"]
+
+    OURPRICE --> GAP
+    MARKETPRICE --> GAP
+    GAP --> FLAG
+    FLAG -->|Yes| REVIEW
+    FLAG -->|No| PASS
+```
+
+**Concretely:** a persistent, growing gap between our priced odds
+and the wider market is itself a signal — either the model has found
+a genuine edge (rare, worth flagging positively) or something is
+wrong with the pricing logic (more likely, worth flagging for
+review). This is the same underlying pattern as the confidence-flag
+system already built for the model — surfacing uncertainty rather
+than acting on it blindly.
+
+### Status
+
+| Component | Status |
+|---|---|
+| Rolling calibration tracking | Conceptual — would extend the existing MLflow logging |
+| Automated retraining trigger | Conceptual — champion/challenger pattern already exists, this adds the automatic trigger condition |
+| Competitor odds comparison | Conceptual — would require a real odds data source |
+| Manual review flagging | Pattern already built — this is the same confidence-flag logic applied to a second signal |
+
+---
+
+## Live In-Play Price Updates
+
+Everything above prices a match once, before kickoff. This section
+covers the genuinely "dynamic" part — how the price changes as the
+match itself unfolds, using the same streaming infrastructure
+already built for match events.
+
+### The mechanism
+
+```mermaid
+graph TB
+    EVENT["Live Match Event<br/>e.g. Arsenal score at 35 minutes"]
+    KAFKA["Kafka<br/>football.match.events"]
+    SPARK["Spark Structured Streaming"]
+    UPDATE["Recalculate lambda<br/>using elapsed time and current score"]
+    NEWPROB["New Win Probability"]
+    REPRICE["Repriced Odds<br/>fair odds recalculated"]
+    PUBLISH["Published to football.predictions"]
+
+    EVENT --> KAFKA
+    KAFKA --> SPARK
+    SPARK --> UPDATE
+    UPDATE --> NEWPROB
+    NEWPROB --> REPRICE
+    REPRICE --> PUBLISH
+```
+
+**This is architecturally already possible** — the Kafka + Spark
+pipeline already streams match events in real time. What's new is
+recalculating the Poisson model's lambda mid-match rather than only
+once before kickoff.
+
+### Worked example
+
+```
+Pre-match:
+  Arsenal win probability: 70%
+  Market odds: 1.35 (5% margin)
+
+35th minute - Arsenal score (1-0):
+  Remaining match time: 55 minutes of 90
+  Recalculated lambda accounts for:
+    - Goals already scored (locked in, cannot be undone)
+    - Remaining time reduces further-scoring lambda
+      proportionally (55/90 of original rate)
+  New Arsenal win probability: 89%
+  Repriced odds: 1.12 (narrower - less time for Coventry to recover)
+
+72nd minute - Coventry score (1-1):
+  Remaining match time: 18 minutes of 90
+  Scores now level, very little time remaining
+  New Arsenal win probability: 42%
+  Repriced odds: 2.38 (widens - genuinely uncertain outcome)
+```
+
+### The actual math change — in-play lambda recalculation
+
+The pre-match model calculates lambda for a full 90 minutes. In-play,
+lambda must be rescaled to the *remaining* time and adjusted for the
+*current score state* — a team already 1-0 up needs fewer additional
+goals to win than a team starting from 0-0.
+
+```python
+def in_play_lambda(pre_match_lambda, elapsed_minutes, current_goals_for):
+    remaining_fraction = (90 - elapsed_minutes) / 90
+    # Simple time-scaling of the original rate.
+    # A fuller model would also adjust for scoreline-driven
+    # changes in playing style (e.g. a losing team pressing harder).
+    return pre_match_lambda * remaining_fraction
+```
+
+### Status
+
+| Component | Status |
+|---|---|
+| Real-time event streaming | Built — this is the existing Kafka + Spark pipeline |
+| Pre-match lambda calculation | Built |
+| In-play lambda recalculation | Conceptual — natural next extension of the existing model, not yet implemented |
+| Live repricing and publishing | Conceptual — would reuse the existing `football.predictions` topic pattern already designed |
+
+**Why this is a natural, not speculative, extension:** the hard
+infrastructure problem — reliable, ordered, low-latency event
+streaming — is already solved by the existing Kafka + Spark layer.
+What remains is genuinely a modelling extension (rescaling lambda to
+remaining time and score state), not a new architecture.
+
+---
+
 ## Level 3: MCP Server Tools
 
 ```mermaid
