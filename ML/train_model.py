@@ -106,14 +106,16 @@ def build_features(matches_df: pd.DataFrame) -> tuple[pd.DataFrame, float, float
     return features_df.round(3), league_avg_home_goals, league_avg_away_goals
 
 
-def _get_strength(features_df: pd.DataFrame, team: str, column: str) -> float:
+def _get_strength(features_df: pd.DataFrame, team: str, column: str) -> tuple[float, bool]:
     """Look up one strength value for a team, falling back to 1.0
     (league-average) if the team never appeared in the training data -
-    e.g. a newly promoted/relegated side we have no history for."""
+    e.g. a newly promoted/relegated side we have no history for. Also
+    reports whether the fallback was used, so callers can flag
+    predictions built on missing data as lower-confidence."""
     row = features_df.loc[features_df["team"] == team]
     if row.empty or pd.isna(row.iloc[0][column]):
-        return 1.0
-    return float(row.iloc[0][column])
+        return 1.0, True
+    return float(row.iloc[0][column]), False
 
 
 def predict_match(
@@ -126,11 +128,18 @@ def predict_match(
     """Predict a single match's outcome probabilities with an
     independent-Poisson model: each side's expected goals (lambda) is
     the league-average goals at that venue, scaled by the attacking
-    team's attack strength and the defending team's defence strength."""
-    home_attack = _get_strength(features_df, home_team, "home_attack_strength")
-    home_defence = _get_strength(features_df, home_team, "home_defence_strength")
-    away_attack = _get_strength(features_df, away_team, "away_attack_strength")
-    away_defence = _get_strength(features_df, away_team, "away_defence_strength")
+    team's attack strength and the defending team's defence strength.
+    Also flags confidence as LOW if either team had no real training
+    history (i.e. any strength value fell back to league-average),
+    since a prediction resting on a 1.0 placeholder is weaker than one
+    built entirely from observed data."""
+    home_attack, home_attack_fallback = _get_strength(features_df, home_team, "home_attack_strength")
+    home_defence, home_defence_fallback = _get_strength(features_df, home_team, "home_defence_strength")
+    away_attack, away_attack_fallback = _get_strength(features_df, away_team, "away_attack_strength")
+    away_defence, away_defence_fallback = _get_strength(features_df, away_team, "away_defence_strength")
+
+    used_fallback = home_attack_fallback or home_defence_fallback or away_attack_fallback or away_defence_fallback
+    confidence = "LOW" if used_fallback else "HIGH"
 
     home_lambda = league_avg_home * home_attack * away_defence
     away_lambda = league_avg_away * away_attack * home_defence
@@ -157,6 +166,7 @@ def predict_match(
         "away_win_prob": away_win_prob,
         "home_lambda": home_lambda,
         "away_lambda": away_lambda,
+        "confidence": confidence,
     }
 
 
@@ -282,6 +292,7 @@ if __name__ == "__main__":
     demo = predict_match("Arsenal FC", "Coventry City FC", final_features_df, final_avg_home, final_avg_away)
     print("Arsenal FC (home) vs Coventry City FC (away):")
     print(f"  home_lambda={demo['home_lambda']:.3f}, away_lambda={demo['away_lambda']:.3f}")
+    print(f"  confidence={demo['confidence']}")
     print(
         f"  home_win_prob={demo['home_win_prob']:.1%}, "
         f"draw_prob={demo['draw_prob']:.1%}, "
