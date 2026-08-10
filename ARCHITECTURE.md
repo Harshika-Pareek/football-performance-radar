@@ -383,6 +383,101 @@ no data access pattern to call.
 
 ---
 
+## 6b. Testing Strategy
+
+### What is tested and why
+
+Testing follows the pipeline's own layer boundaries — each layer has
+tests appropriate to what can go wrong at that layer.
+
+```
+tests/
+├── test_features.py    # extract_features.py: groupby logic,
+│                          strength normalisation, missing-team fallback
+├── test_model.py        # predict_match(): Poisson probability matrix
+│                          correctness, confidence flagging
+├── test_pricing.py      # pricing_layer.py: fair odds calculation,
+│                          confidence-linked margin sizing
+└── conftest.py          # shared fixtures - sample match data
+```
+
+### Example: what a pricing test actually checks
+
+```python
+def test_low_confidence_widens_margin():
+    high_conf_margin = apply_margin(base_margin=0.05, confidence="HIGH")
+    low_conf_margin = apply_margin(base_margin=0.05, confidence="LOW")
+    assert low_conf_margin > high_conf_margin
+
+def test_fair_odds_calculation():
+    assert fair_odds_from_probability(0.5) == pytest.approx(2.0)
+```
+
+These are unit tests of deterministic logic — given a known input,
+the output must be mathematically correct. This is distinct from
+model evaluation (accuracy, calibration on real backtested data,
+covered in Section 5) and from live experimentation (Section 6c) —
+three different kinds of correctness, tested three different ways.
+
+### What is explicitly NOT tested this way
+
+Model prediction quality (is 73% actually right 73% of the time)
+cannot be unit tested — it requires the out-of-sample backtesting
+process described in Section 5. Unit tests confirm the *mechanics*
+are correct (the Poisson formula is implemented correctly); they
+cannot confirm the *model* is good. Conflating these two is a common
+mistake this project deliberately avoids.
+
+### Status
+
+| Component | Status |
+|---|---|
+| pytest test suite structure | Planned — next addition |
+| test_pricing.py | Planned — building alongside pricing_layer.py |
+| test_model.py | Planned |
+| test_features.py | Planned |
+| CI integration (run tests on every PR) | Planned — Phase 5, GitHub Actions |
+
+---
+
+## 6c. Dynamic Pricing Experimentation
+
+### The honest distinction: simulation testing vs. live A/B testing
+
+This project can genuinely test whether pricing *logic* behaves
+correctly (unit tests, Section 6b). It cannot run genuine live A/B
+tests, which require real user behaviour data this project does not
+have. Two different activities, kept explicitly separate:
+
+**Simulation testing (buildable now):**
+```python
+def test_in_play_repricing_direction():
+    pre_match_lambda = 2.1
+    # Simulate: home team scores at minute 35
+    updated = in_play_lambda(pre_match_lambda, elapsed_minutes=35,
+                              current_goals_for=1)
+    # Less remaining time -> lower expected additional goals
+    assert updated < pre_match_lambda
+```
+
+This confirms the repricing mechanism moves in the mathematically
+correct direction — a genuine, valuable test of the logic.
+
+**Live A/B testing (requires infrastructure this project doesn't
+have — real users, real traffic, real outcomes):**
+```
+Hash-based deterministic assignment: half of fixtures priced by
+Model A, half by Model B → compare real outcome accuracy after
+enough matches → statistically significant winner promoted.
+```
+
+Documented as a Phase 2 concept (see Section 7), explicitly
+contingent on the 2026/27 season being live, since it needs real
+upcoming fixtures to assign and real results to compare against —
+neither of which exists for a backtest-only project.
+
+---
+
 ## 7. Delivery Phases
 
 | Phase | Content | Target |
@@ -431,6 +526,10 @@ no data access pattern to call.
 | MinIO (artifact store) | ✅ Running |
 | MLflow (experiment tracking) | ✅ Running |
 | Feature extraction (2025/26 PL team strengths) | ✅ Complete |
+| Poisson model + season-split backtesting | ✅ Complete (45.5% out-of-sample accuracy) |
+| MLflow model registry (formal registration) | 🔄 In progress |
+| Pricing layer (odds + confidence-linked margin) | 🔄 In progress |
+| pytest test suite | ⏳ Planned — next addition |
 | Multi-sport producer architecture | 🔄 In progress |
 | Poisson model + MLflow logging | 🔄 In progress |
 | Feast feature store | ⏳ Planned — Phase 2 |
